@@ -3,6 +3,7 @@ from tkinter import ttk, filedialog, messagebox
 import threading
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
+import os
 
 from package.gene_operations import (
     classify_genes_with_progress,
@@ -139,7 +140,14 @@ root = tk.Tk()
 root.title("基因工具")
 root.geometry("650x550")
 root.resizable(False, False)
-root.iconbitmap(r"package\\icon.ico")
+
+# 修复icon.ico路径问题，若不存在则跳过设置
+icon_path = os.path.join(os.path.dirname(__file__), "package", "icon.ico")
+if os.path.exists(icon_path):
+    try:
+        root.iconbitmap(icon_path)
+    except Exception:
+        pass
 
 main_frame = ttk.Notebook(root)
 main_frame.pack(fill="both", expand=True)
