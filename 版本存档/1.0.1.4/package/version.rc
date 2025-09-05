@@ -1,0 +1,29 @@
+# UTF-8 BOM 不支持，请保存为 ANSI
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 1, 4, 0),        # 文件版本号
+    prodvers=(1, 1, 4, 0),        # 产品版本号
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,                 # 1 = 应用程序
+    subtype=0x0,
+    date=(0, 0)
+    ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'040904b0',              # 语言与代码页 (美国英语 + Unicode)
+        [StringStruct(u'CompanyName', u'MyCompany'),
+        StringStruct(u'FileDescription', u'基因工具 - Excel 批量基因匹配工具'),
+        StringStruct(u'FileVersion', u'1.1.4.0'),
+        StringStruct(u'InternalName', u'GeneTool'),
+        StringStruct(u'OriginalFilename', u'main.exe'),
+        StringStruct(u'ProductName', u'基因工具'),
+        StringStruct(u'ProductVersion', u'1.1.4.0'),
+        StringStruct(u'LegalCopyright', u'© 2025 MyCompany. All rights reserved.')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)
