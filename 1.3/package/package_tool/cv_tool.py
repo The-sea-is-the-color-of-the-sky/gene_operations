@@ -6,42 +6,65 @@ from matplotlib.patches import Wedge, PathPatch
 from matplotlib.path import Path
 import tkinter as tk
 
-# 辅助：从 StringVar 或普通字符串中安全获取值
+
 def _get_val(v):
+    """安全获取 StringVar 或普通字符串的值"""
     try:
         return v.get()
     except Exception:
         return v
 
-# ---------------- 关系图 ----------------
-def plot_network(self):
-    # 从 self 上安全读取列名（兼容 StringVar 或 直接字符串）
-    x_col = _get_val(getattr(self, "x_column", "")) 
-    y_col = _get_val(getattr(self, "y_column", "")) 
-    weight_col = _get_val(getattr(self, "date_column", ""))
 
-    # 检查 DataFrame
-    df = getattr(self, "df", None)
+def _resolve_args(obj_or_df, x_col, y_col, weight_col, show_plot):
+    """统一解析传入参数，支持 GUI 对象或直接传入 DataFrame"""
+    df = None
+    status_var = None
+    if obj_or_df is not None and hasattr(obj_or_df, "df"):
+        self_obj = obj_or_df
+        df = getattr(self_obj, "df", None)
+        x_col = x_col or _get_val(getattr(self_obj, "x_column", "")) or None
+        y_col = y_col or _get_val(getattr(self_obj, "y_column", "")) or None
+        weight_col = weight_col or _get_val(getattr(self_obj, "date_column", "")) or None
+        status_var = getattr(self_obj, "status_var", None)
+        if show_plot is None and hasattr(self_obj, "show_plot"):
+            show_plot = getattr(self_obj, "show_plot")
+    else:
+        df = obj_or_df
+
+    # 增强列验证
+    if df is not None and hasattr(df, "columns"):
+        if x_col and x_col not in df.columns:
+            if status_var:
+                status_var.set(f"❌ 节点1列 '{x_col}' 无效")
+            return None, None, None, None, None, status_var
+        if y_col and y_col not in df.columns:
+            if status_var:
+                status_var.set(f"❌ 节点2列 '{y_col}' 无效")
+            return None, None, None, None, None, status_var
+        if weight_col and weight_col not in df.columns and weight_col != "--- 请选择 ---":
+            if status_var:
+                status_var.set(f"❌ 权重列 '{weight_col}' 无效")
+            return None, None, None, None, None, status_var
+    return df, x_col, y_col, weight_col, show_plot, status_var
+
+
+def plot_network(obj_or_df=None, x_col=None, y_col=None, weight_col=None, show_plot=None):
+    """绘制关系网络图"""
+    df, x_col, y_col, weight_col, show_plot, status_var = _resolve_args(obj_or_df, x_col, y_col, weight_col, show_plot)
+
     if df is None or not hasattr(df, "columns"):
-        if hasattr(self, "status_var"):
-            try:
-                self.status_var.set("❌ 请先加载数据（DataFrame 为空）！")
-            except Exception:
-                pass
-        return
+        if status_var is not None:
+            status_var.set("❌ 请先加载数据（DataFrame 为空）！")
+        return None
 
-    if x_col not in df.columns or y_col not in df.columns:
-        if hasattr(self, "status_var"):
-            try:
-                self.status_var.set("❌ 选中的节点列无效。")
-            except Exception:
-                pass
-        return
+    if not x_col:
+        x_col = df.columns[0] if len(df.columns) > 0 else None
+    if not y_col:
+        y_col = df.columns[1] if len(df.columns) > 1 else x_col
 
     G = nx.Graph()
 
-    # 处理边及权重
-    if weight_col not in ["--- 请选择 ---", ""]:
+    if weight_col and weight_col in df.columns and weight_col != "--- 请选择 ---":
         df_temp = df[[x_col, y_col, weight_col]].copy()
         df_temp[weight_col] = pd.to_numeric(df_temp[weight_col], errors="coerce").fillna(0)
         df_grouped = df_temp.groupby([x_col, y_col])[weight_col].mean().reset_index()
@@ -53,25 +76,20 @@ def plot_network(self):
     G.add_edges_from(edges)
 
     if G.number_of_nodes() == 0:
-        if hasattr(self, "status_var"):
-            try:
-                self.status_var.set("❌ 数据中没有找到任何节点关系。")
-            except Exception:
-                pass
-        return
+        if status_var is not None:
+            status_var.set("❌ 数据中没有找到任何节点关系。")
+        return None
 
     np.random.seed(42)
-
     num_nodes = G.number_of_nodes()
     k_value = 10 / np.sqrt(np.sqrt(num_nodes)) if num_nodes > 1 else 0.5
+    iterations = min(2000, max(50, 1000 // max(1, num_nodes // 10)))
 
-    # layout 可能耗时，捕获异常降级
     try:
-        pos = nx.spring_layout(G, k=k_value, iterations=2000)
+        pos = nx.spring_layout(G, k=k_value, iterations=iterations)
     except Exception:
         pos = nx.spring_layout(G, k=0.5, iterations=50)
 
-    # 坐标缩放与调整（对单节点或非常小矩阵做保护）
     try:
         pos_arr = np.array(list(pos.values()))
         if pos_arr.size == 0:
@@ -86,13 +104,11 @@ def plot_network(self):
                 scale * (pos[n][1] - min_xy[1]) / (dy + 1e-9),
             )
     except Exception:
-        # 退回不缩放的原始 pos
         pass
 
     for n in pos:
         pos[n] = (pos[n][0] + np.random.uniform(-0.02, 0.02), pos[n][1] + np.random.uniform(-0.02, 0.02))
 
-    # 防止节点重叠（简单平移）
     min_dist = 0.05
     nodes_list = list(pos.keys())
     for i in range(len(nodes_list)):
@@ -106,13 +122,11 @@ def plot_network(self):
                 pos[ni] = (pos[ni][0] - dx / dist * shift, pos[ni][1] - dy / dist * shift)
                 pos[nj] = (pos[nj][0] + dx / dist * shift, pos[nj][1] + dy / dist * shift)
 
-    # 节点大小和颜色
     degrees = dict(G.degree())
     fixed_size = 300
     node_sizes = [fixed_size] * len(degrees)
     node_colors = list(degrees.values())
 
-    # 边宽
     if nx.get_edge_attributes(G, "weight"):
         weights = [G[u][v]["weight"] for u, v in G.edges()]
         max_w = max(weights) if weights else 1
@@ -158,12 +172,11 @@ def plot_network(self):
         ax=ax
     )
 
-    node_labels = {}
-    for i, node in enumerate(G.nodes()):
-        if i < 60:
-            x, y = pos[node]
-            node_labels[node] = node
-            pos[node] = (x, y + 0.02)
+    max_labels = min(60, len(G.nodes()))
+    node_labels = {node: node for i, node in enumerate(G.nodes()) if i < max_labels}
+    for node in node_labels:
+        x, y = pos[node]
+        pos[node] = (x, y + 0.02)
 
     nx.draw_networkx_labels(
         G, pos,
@@ -188,7 +201,6 @@ def plot_network(self):
 
     plt.axis("off")
 
-    # 色条
     try:
         vmin = min(node_colors) if node_colors else 0
         vmax = max(node_colors) if node_colors else 1
@@ -204,36 +216,36 @@ def plot_network(self):
 
     plt.tight_layout()
 
-    # 显示并更新状态
     try:
-        self.show_plot(fig)
-        if hasattr(self, "status_var"):
-            self.status_var.set("✅ 图形生成完成")
+        if show_plot:
+            show_plot(fig)
+        if status_var is not None:
+            status_var.set("✅ 图形生成完成")
     except Exception:
         pass
 
-# ---------------- 热图 ----------------
-def plot_heatmap(self):
-    df = getattr(self, "df", None)
-    if df is None:
-        try:
-            self.status_var.set("❌ 请先选择信息文件！")
-        except Exception:
-            pass
-        return
+    return fig
 
-    x_col = _get_val(getattr(self, "x_column", "")) or df.columns[0]
-    y_col = _get_val(getattr(self, "y_column", "")) or (df.columns[1] if len(df.columns) > 1 else df.columns[0])
-    date_col = _get_val(getattr(self, "date_column", "")) or (df.columns[2] if len(df.columns) > 2 else df.columns[-1])
+
+def plot_heatmap(obj_or_df=None, x_col=None, y_col=None, date_col=None, show_plot=None):
+    """绘制热图"""
+    df, x_col, y_col, date_col, show_plot, status_var = _resolve_args(obj_or_df, x_col, y_col, date_col, show_plot)
+
+    if df is None:
+        if status_var is not None:
+            status_var.set("❌ 请先选择信息文件！")
+        return None
+
+    x_col = x_col or df.columns[0]
+    y_col = y_col or (df.columns[1] if len(df.columns) > 1 else df.columns[0])
+    date_col = date_col or (df.columns[2] if len(df.columns) > 2 else df.columns[-1])
 
     try:
         pivot_table = df.pivot_table(index=y_col, columns=x_col, values=date_col, aggfunc='mean')
     except Exception as e:
-        try:
-            self.status_var.set(f"❌ 无法生成热图: {e}")
-        except Exception:
-            pass
-        return
+        if status_var is not None:
+            status_var.set(f"❌ 无法生成热图: {e}")
+        return None
 
     fig, ax = plt.subplots(figsize=(10, 8))
     cax = ax.imshow(pivot_table, aspect='auto', cmap='viridis')
@@ -242,50 +254,47 @@ def plot_heatmap(self):
     ax.set_xticklabels(pivot_table.columns, rotation=90)
     ax.set_yticks(range(len(pivot_table.index)))
     ax.set_yticklabels(pivot_table.index)
-    ax.set_xlabel(_get_val(getattr(self, "x_label", "")) or x_col)
-    ax.set_ylabel(_get_val(getattr(self, "y_label", "")) or y_col)
+    ax.set_xlabel(x_col)
+    ax.set_ylabel(y_col)
     ax.set_title("Heatmap Visualization")
     fig.tight_layout()
     try:
-        self.show_plot(fig)
+        if show_plot:
+            show_plot(fig)
     except Exception:
         pass
+    return fig
 
-# ---------------- 美观弦图 ----------------
-def plot_chord(self):
-    df = getattr(self, "df", None)
+
+def plot_chord(obj_or_df=None, col1=None, col2=None, show_plot=None):
+    """绘制弦图"""
+    df, col1, col2, _unused, show_plot, status_var = _resolve_args(obj_or_df, col1, col2, None, show_plot)
+
     if df is None:
-        try:
-            self.status_var.set("❌ 请先选择信息文件！")
-        except Exception:
-            pass
-        return
+        if status_var is not None:
+            status_var.set("❌ 请先选择信息文件！")
+        return None
 
     if len(df.columns) < 2:
-        try:
-            self.status_var.set("❌ 数据列不足两列！")
-        except Exception:
-            pass
-        return
+        if status_var is not None:
+            status_var.set("❌ 数据列不足两列！")
+        return None
 
-    col1 = _get_val(getattr(self, "x_column", "")) or df.columns[0]
-    col2 = _get_val(getattr(self, "y_column", "")) or df.columns[1]
+    col1 = col1 or df.columns[0]
+    col2 = col2 or (df.columns[1] if len(df.columns) > 1 else df.columns[0])
+
     data = df[[col1, col2]].dropna()
     if col1 == "--- 请选择 ---" or col2 == "--- 请选择 ---":
-        try:
-            self.status_var.set("❌ 弦图至少需要选择 **第一列 (X)** 和 **第二列 (Y)**！")
-        except Exception:
-            pass
-        return
+        if status_var is not None:
+            status_var.set("❌ 弦图至少需要选择 **第一列 (X)** 和 **第二列 (Y)**！")
+        return None
 
     nodes = sorted(set(data[col1]).union(set(data[col2])))
     n = len(nodes)
     if n == 0:
-        try:
-            self.status_var.set("❌ 数据中未发现节点！")
-        except Exception:
-            pass
-        return
+        if status_var is not None:
+            status_var.set("❌ 数据中未发现节点！")
+        return None
     node_index = {v: i for i, v in enumerate(nodes)}
     matrix = np.zeros((n, n))
     for a, b in data.values:
@@ -294,18 +303,15 @@ def plot_chord(self):
         matrix[j, i] += 1
     total = np.sum(matrix)
     if total == 0:
-        try:
-            self.status_var.set("❌ 数据无连接关系，无法绘制弦图。")
-        except Exception:
-            pass
-        return
+        if status_var is not None:
+            status_var.set("❌ 数据无连接关系，无法绘制弦图。")
+        return None
 
     pad_deg = 2
     pad = np.deg2rad(pad_deg)
     weights = matrix.sum(axis=1)
-    # 防止除以 0
     weights_sum = weights.sum() if weights.sum() > 0 else 1
-    angles = (2*np.pi - n*pad) * weights / weights_sum
+    angles = (2 * np.pi - n * pad) * weights / weights_sum
     starts, ends = np.zeros(n), np.zeros(n)
     current = 0
     for i in range(n):
@@ -323,11 +329,11 @@ def plot_chord(self):
     inner_radius = 0.7
 
     def angle_to_point(a, r=1):
-        return np.array([np.cos(a)*r, np.sin(a)*r])
+        return np.array([np.cos(a) * r, np.sin(a) * r])
 
     for i in range(n):
         wedge = Wedge((0, 0), 1, np.degrees(starts[i]), np.degrees(ends[i]),
-                        width=0.15, facecolor=colors[i], edgecolor="white")
+                      width=0.15, facecolor=colors[i], edgecolor="white")
         ax.add_patch(wedge)
 
         mid = 0.5 * (starts[i] + ends[i])
@@ -343,18 +349,18 @@ def plot_chord(self):
 
     max_m = np.max(matrix) if np.max(matrix) > 0 else 1
     for i in range(n):
-        for j in range(i+1, n):
+        for j in range(i + 1, n):
             if matrix[i, j] <= 0:
                 continue
             v = matrix[i, j]
-            a1 = 0.5*(starts[i]+ends[i])
-            a2 = 0.5*(starts[j]+ends[j])
+            a1 = 0.5 * (starts[i] + ends[i])
+            a2 = 0.5 * (starts[j] + ends[j])
             p1 = angle_to_point(a1, inner_radius)
             p2 = angle_to_point(a2, inner_radius)
             verts = [
                 (p1[0], p1[1]),
-                (p1[0]*0.4, p1[1]*0.4),
-                (p2[0]*0.4, p2[1]*0.4),
+                (p1[0] * 0.4, p1[1] * 0.4),
+                (p2[0] * 0.4, p2[1] * 0.4),
                 (p2[0], p2[1]),
             ]
             codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]
@@ -362,13 +368,15 @@ def plot_chord(self):
             patch = PathPatch(
                 path, facecolor="none",
                 edgecolor=colors[i],
-                lw=0.8 + 3*(v/max_m),
-                alpha=0.4 + 0.6*(v/max_m)
+                lw=0.8 + 3 * (v / max_m),
+                alpha=0.4 + 0.6 * (v / max_m)
             )
             ax.add_patch(patch)
 
     ax.set_aspect("equal")
     try:
-        self.show_plot(fig)
+        if show_plot:
+            show_plot(fig)
     except Exception:
         pass
+    return fig
