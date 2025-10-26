@@ -4,23 +4,22 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import threading
 from package.package_tool.cv_tool import plot_chord, plot_heatmap, plot_network
 
 
 class CV_LINK_GUI:
     def __init__(self, root):
-
         self.root = root
         self.root.title("基因联系可视化")
         self.root.geometry("1200x650")
-        self.root.resizable(False, False)
+        self.root.minsize(800, 500)  # 支持调整窗口大小，设置最小尺寸
 
         self.path_var = tk.StringVar()
         self.output_dir = tk.StringVar()
         self.x_column = tk.StringVar()
         self.y_column = tk.StringVar()
         self.date_column = tk.StringVar()
-        self.progress_var = tk.IntVar()
         self.status_var = tk.StringVar(value="等待任务开始...")
 
         self.df = None
@@ -60,16 +59,13 @@ class CV_LINK_GUI:
         self.x_combobox = ttk.Combobox(cv_path, textvariable=self.x_column, state="readonly", width=15)
         self.x_combobox.grid(row=4, column=1, sticky="we")
 
-
         ttk.Label(cv_path, text="节点2列:").grid(row=6, column=0, padx=5, pady=5, sticky="w")
         self.y_combobox = ttk.Combobox(cv_path, textvariable=self.y_column, state="readonly", width=15)
         self.y_combobox.grid(row=6, column=1, sticky="we")
 
-
         ttk.Label(cv_path, text="数据（权重）列:").grid(row=8, column=0, padx=5, pady=5, sticky="w")
         self.date_combobox = ttk.Combobox(cv_path, textvariable=self.date_column, state="readonly", width=15)
         self.date_combobox.grid(row=8, column=1, sticky="we")
-
 
         cv_run.grid_columnconfigure((0, 1, 2, 3), weight=1)
         ttk.Label(cv_run, text="图片类型").grid(row=0, column=0, padx=5, pady=5, sticky="we")
@@ -83,7 +79,7 @@ class CV_LINK_GUI:
         status_label = tk.Label(cv_run, textvariable=self.status_var, anchor="w", wraplength=200, justify="left")
         status_label.grid(row=3, column=0, columnspan=4, sticky="we")
 
-    def load_file(self):
+    def load_file(self, path_var):
         file_path = filedialog.askopenfilename(filetypes=[("Excel/CSV files", "*.xlsx;*.xls;*.csv")])
         if not file_path:
             return
@@ -116,7 +112,26 @@ class CV_LINK_GUI:
             output_dir.set(path)
 
     def run_cv(self):
-        graph_type = self.function_combo.get()
+        def generate_graph():
+            graph_type = self.function_combo.get()
+            try:
+                if graph_type == "弦图":
+                    fig = plot_chord(self, self.x_column.get(), self.y_column.get(), self.show_plot)
+                elif graph_type == "关系网络图":
+                    fig = plot_network(self, self.x_column.get(), self.y_column.get(), self.date_column.get(), self.show_plot)
+                elif graph_type == "热图":
+                    fig = plot_heatmap(self, self.x_column.get(), self.y_column.get(), self.date_column.get(), self.show_plot)
+                else:
+                    self.root.after(0, lambda: self.status_var.set("❌ 未识别的图形类型"))
+                    return
+
+                if fig:
+                    self.root.after(0, lambda: self.show_plot(fig))
+                else:
+                    self.root.after(0, lambda: self.status_var.set("❌ 图形生成失败"))
+            except Exception as e:
+                self.root.after(0, lambda: self.status_var.set(f"❌ 图形生成失败: {e}"))
+            self.root.after(0, self.root.update_idletasks)
 
         if self.df is None:
             self.status_var.set("❌ 请先加载数据文件！")
@@ -126,17 +141,8 @@ class CV_LINK_GUI:
             self.status_var.set("❌ 请选择 节点1列 和 节点2列 作为绘图依据！")
             return
 
-        if graph_type == "弦图":
-            plot_chord()
-        elif graph_type == "关系网络图":
-            plot_network()
-        elif graph_type == "热图":
-            plot_heatmap()
-        else:
-            self.status_var.set("❌ 未识别的图形类型")
-
-        self.root.update_idletasks()
-
+        self.status_var.set("⏳ 正在生成图形...")
+        threading.Thread(target=generate_graph, daemon=True).start()
 
     def show_plot(self, fig):
         self.figure = fig
@@ -148,6 +154,7 @@ class CV_LINK_GUI:
         self.status_var.set("✅ 图形生成完成")
 
     def save_cv(self):
+        import re
         if not self.figure:
             self.status_var.set("❌ 请先生成图形！")
             return
@@ -157,6 +164,7 @@ class CV_LINK_GUI:
             return
 
         input_name = os.path.splitext(os.path.basename(self.path_var.get()))[0]
+        input_name = re.sub(r'[^\w\-]', '_', input_name)  # 替换非法字符
         plot_type = self.function_combo.get()
         save_path = os.path.join(save_dir, f"{input_name}_{plot_type}.png")
 
